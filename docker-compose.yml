@@ -341,7 +341,7 @@ services:
       - POSTGRES_PASSWORD=airflow_pass
       - POSTGRES_DB=airflow_db
     volumes:
-      - ./airflow/postgres_data:/var/lib/postgresql/data:rw
+      - postgres_data_vol:/var/lib/postgresql/data
     ports:
       - "5433:5432" # Expose on 5433 to avoid conflict if you have another Postgres
     networks:
@@ -423,4 +423,6 @@ volumes:
   kafka2_data_vol:
     driver: local
   kafka3_data_vol:
+    driver: local
+  postgres_data_vol:
     driver: local

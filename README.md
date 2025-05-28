@@ -110,6 +110,16 @@ Airflow orchestrates the pipeline:
 - Use the Spark Master UI to monitor Spark jobs and streaming queries.
 - Use the Airflow Web UI to monitor DAG runs and task statuses.
 
+### Results
+
+I used console logs for simplicity (no need to setup credentials to run this) but you can modify this easily to send emails or other notifications when in production. 
+![Alert Messages](results/Alert_Message.png)
+
+![Parsed Logs](results/Parsed_Data.png)
+
+![Aggregated Data](results/Agg_Data.png)
+
+
 ## Project File Structure
 
 ```
@@ -119,11 +129,6 @@ Logs-Real-Time-Processing/
 │   │   └── stream_orch_dag.py  # Airflow Pipeline DAG
 │   ├── logs/                   # Airflow logs
 │   ├── plugins/                # Airflow plugins
-│   └── postgres_data/          # PostgreSQL data for Airflow
-├── kafka/                      # Kafka data and configuration
-│   ├── kafka1-data/
-│   ├── kafka2-data/
-│   └── kafka3-data/
 ├── log-generator/              # Log generator configuration
 │   ├── Dockerfile              # Dockerfile for log generator container
 │   ├── log_generator.py        # Python script for log generation
@@ -139,6 +144,8 @@ Logs-Real-Time-Processing/
 │       │   ├── aggregated_logs/    # Aggregated logs
 │       │   └── processed_logs_hourly/  # Hourly processed logs
 │       └── spark_checkpoints/  # Spark checkpoints
+│       │   ├── alerts_checkpoint/    
+│       │   ├── processed_logs_checkpoint/    
 ├── results/                    # Sample results
 ├── Makefile                    # Commands to manage the pipeline
 ├── docker-compose.yml          # Docker Compose configuration
