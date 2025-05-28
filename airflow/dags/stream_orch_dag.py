@@ -32,7 +32,7 @@ def _check_pyspark_job():
     If there is an error in the request, also return 'submit_spark_job_task'.
     """
     try:
-        response = requests.get('http://172.21.0.7:8080/json/')
+        response = requests.get('http://spark-master:8080/json/')
         if response.status_code == 200:
             active_job_status = response.json()["activeapps"]
             for job in active_job_status:
