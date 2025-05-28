@@ -12,7 +12,7 @@ This project implements a real-time log processing pipeline for e-commerce payme
 
 
 ## Project Structure
-![Project Diagram](Project_Diagram.png)
+![Project Diagram](results/Project_Diagram.png)
 
 
 ## Architecture
@@ -56,6 +56,7 @@ This will:
 ### Note:
 - In case you want to use docker commands instead of make you should run the flowing commands:
 ```bash
+chmod -R 777 *
 docker compose up -d
 docker compose --profile manual create
 ``` 

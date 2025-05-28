@@ -1,5 +1,6 @@
 start-pipeline:
 	@echo "Starting the pipeline..."
+	chmod -R 777 *
 	docker compose --profile manual create
 	docker compose up -d
 	@echo "Pipeline started successfully."
