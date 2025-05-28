@@ -1,0 +1,422 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.5 # Or your preferred version
+  environment:
+    # --- Core Airflow Settings ---
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__CORE__LOAD_EXAMPLES=False # Keep it lean
+    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+    # --- Database Connection (PostgreSQL) ---
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow_user:airflow_pass@postgres_airflow:5432/airflow_db
+    # --- Webserver settings (optional, but useful) ---
+    - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+    # --- Scheduler settings (optional) ---
+    # - AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL=30 # How often to scan for new DAGs
+    # If you need to install providers (e.g., for S3, Snowflake, etc.)
+    # - _PIP_ADDITIONAL_REQUIREMENTS=
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags # Mount your DAGs folder
+    - ./airflow/logs:/opt/airflow/logs # For persistent task logs
+    - ./airflow/plugins:/opt/airflow/plugins # For custom plugins
+    - /var/run/docker.sock:/var/run/docker.sock # Mandatory because you need to run Docker tasks from Airflow
+    - ./:/opt/project_root # Mount the current directory (containing docker-compose.yml)
+  # This ensures files created in mounted volumes have your host user's permissions
+  # May require `user: "${AIRFLOW_UID:-50000}"` in Airflow services below if you don't run `docker-compose` as root
+  # On Linux, this is often best:
+  user: "${AIRFLOW_UID:-0}" # 0 for root if AIRFLOW_UID is not set, or your current UID
+  depends_on:
+    postgres_airflow:
+      condition: service_healthy
+
+services:
+# Service definition for Kafka broker 1. This service is part of a Kafka cluster
+# and is responsible for handling message brokering and communication between
+# producers and consumers. Configuration details such as ports, environment
+# variables, and volumes should be specified to ensure proper functionality.
+  kafka1:
+    image: confluentinc/cp-server:7.9.1 # Use the 7.9.1 version of Confluent Kafka
+    container_name: kafka1 # Name of the container
+    hostname: kafka1 # Hostname for the container
+    ports:
+      - "9092:9092" # External access for clients
+      - "9071:9071" # Internal KRaft controller listener
+    environment:
+      KAFKA_NODE_ID: 1 # Unique ID for this broker in the cluster
+      KAFKA_PROCESS_ROLES: 'broker,controller' # Runs as both broker and controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka1:9071,2@kafka2:9072,3@kafka3:9073' # List all controller nodes
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka1:29092,CONTROLLER://kafka1:9071,PLAINTEXT_HOST://0.0.0.0:9092' # Define listeners for external and internal communication
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka1:29092,PLAINTEXT_HOST://localhost:9092' # Advertised listeners for clients
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT' # Listener for inter-broker communication
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER' # Listener for controller communication
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT' # Map listeners to security protocols
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3 # Replication factor for internal topics .. Should be <= number of brokers
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0 # Initial delay for group rebalancing
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 3 # Replication factor for Confluent license topic
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 3 # Replication factor for Confluent balancer topic
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2 # Minimum in-sync replicas for transaction state log .. Min ISR should be less than replication factor
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_JMX_PORT: 9101 # Port for JMX monitoring
+      KAFKA_JMX_HOSTNAME: localhost # Hostname for JMX monitoring
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081 # URL for Schema Registry
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter # Metric reporter for Confluent
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094 # Bootstrap servers for metrics reporter
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3 # Replication factor for metrics reporter topic
+      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      CONFLUENT_METRICS_ENABLE: 'true' # Enable Confluent metrics
+      CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Generate a unique Base64 Cluster ID
+    volumes:
+      - ./kafka/kafka1-data:/tmp/kafka-data:rw
+    networks:
+      - internal-network # Network for Kafka communication
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"] # Check if Kafka is reachable
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+# Service definition for Kafka broker 2. This service is part of a Kafka cluster
+# and is responsible for handling message brokering and communication between
+# producers and consumers. Configuration details such as ports, environment
+# variables, and volumes should be specified to ensure proper functionality.
+  # This service is similar to kafka1 but with different ports and node ID.
+  kafka2:
+    image: confluentinc/cp-server:7.9.1
+    container_name: kafka2
+    hostname: kafka2
+    ports:
+      - "9093:9093"
+      - "9072:9072"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka1:9071,2@kafka2:9072,3@kafka3:9073'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka2:29093,CONTROLLER://kafka2:9072,PLAINTEXT_HOST://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka2:29093,PLAINTEXT_HOST://localhost:9093'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3
+      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      CONFLUENT_METRICS_ENABLE: 'true'
+      CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Must be the same for all nodes
+    volumes:
+      - ./kafka/kafka2-data:/tmp/kafka-data:rw
+    networks:
+      - internal-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9093"] # Check if Kafka is reachable
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+# Service definition for Kafka broker 3. This service is part of a Kafka cluster
+# and is responsible for handling message brokering and communication between
+# producers and consumers. Configuration details such as ports, environment
+# variables, and volumes should be specified to ensure proper functionality.
+  # This service is similar to kafka1 and kafka2 but with different ports and node ID.
+  kafka3:
+    image: confluentinc/cp-server:7.9.1
+    container_name: kafka3
+    hostname: kafka3
+    ports:
+      - "9094:9094"
+      - "9073:9073"
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka1:9071,2@kafka2:9072,3@kafka3:9073'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka3:29094,CONTROLLER://kafka3:9073,PLAINTEXT_HOST://0.0.0.0:9094'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka3:29094,PLAINTEXT_HOST://localhost:9094'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3
+      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      CONFLUENT_METRICS_ENABLE: 'true'
+      CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Must be the same for all nodes
+    volumes:
+      - ./kafka/kafka3-data:/tmp/kafka-data:rw
+    networks:
+      - internal-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9094"] # Check if Kafka is reachable
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+# Service definition for Schema Registry. This service is responsible for managing
+# schemas for Kafka topics and ensuring data compatibility. Configuration details
+# such as ports, environment variables, and dependencies should be specified to
+# ensure proper functionality.
+  # This service is dependent on the Kafka brokers and should be started after them.
+  # It uses the internal Kafka listeners for communication.
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.9.1 # Use the 7.9.1 version of Confluent Schema Registry
+    container_name: schema-registry # Name of the container
+    hostname: schema-registry # Hostname for the container
+    ports:
+      - "8081:8081" # External access for clients
+    depends_on:
+      kafka1:
+        condition: service_healthy # Waits for healthcheck
+      kafka2:
+        condition: service_healthy # Waits for healthcheck
+      kafka3:
+        condition: service_healthy # Waits for healthcheck
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry # Hostname for Schema Registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka1:29092,kafka2:29093,kafka3:29094' # Uses the PLAINTEXT internal listeners
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081 # Listeners for external access
+    networks:
+      - internal-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"] # Check if Schema Registry is reachable
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+# Service definition for Confluent Control Center. This service provides a web-based
+# interface for monitoring and managing the Kafka cluster. Configuration details such
+# as ports, environment variables, and dependencies should be specified to ensure
+# proper functionality. It requires the Kafka brokers and Schema Registry to be healthy.
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.9.1 # Use the 7.9.1 version of Confluent Control Center
+    hostname: control-center # Hostname for the container
+    container_name: control-center # Name of the container
+    depends_on:
+      kafka1:
+        condition: service_healthy # Waits for healthcheck
+      kafka2:
+        condition: service_healthy # Waits for healthcheck
+      kafka3:
+        condition: service_healthy # Waits for healthcheck
+      schema-registry:
+        condition: service_healthy # Waits for healthcheck
+    ports:
+      - "9021:9021" # Control Center Web UI port
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'kafka1:29092,kafka2:29093,kafka3:29094' # Bootstrap servers for Control Center
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081" # URL for Schema Registry
+      CONTROL_CENTER_REPLICATION_FACTOR: 3 # Replication factor for Control Center topics
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1 # Number of partitions for internal topics
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1 # Partitions for monitoring interceptor topic
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 3 # Replication factor for metrics topic
+      PORT: 9021 # Port Control Center listens on inside the container
+      CONTROL_CENTER_KSQL_ENABLE: "false" # Disable because of not using ksqlDB
+      CONTROL_CENTER_CONNECT_ENABLE: "false" # Disable because of not Kafka Connect
+    networks:
+      - internal-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9021"] # Check if Schema Registry is reachable
+      interval: 5s
+      timeout: 5s
+      retries: 120
+    restart: unless-stopped
+
+  # --- Python Script (Simulate Log Generation) ---
+  # This service runs a Python script that generates logs and sends them to Kafka topics.
+  # It depends on Kafka, Schema Registry, and Control Center to be healthy before starting.
+  log-generator:
+    build:
+      context: log-generator
+      dockerfile: Dockerfile
+    container_name: log-generator
+    hostname: log-generator
+    networks:
+      - internal-network
+    depends_on:
+      kafka1:
+        condition: service_healthy # Waits for healthcheck
+      kafka2:
+        condition: service_healthy # Waits for healthcheck
+      kafka3:
+        condition: service_healthy # Waits for healthcheck
+      schema-registry:
+        condition: service_healthy # Waits for healthcheck
+      control-center:
+        condition: service_healthy # Waits for healthcheck
+    profiles: ["manual"] # Only run this service when the 'manual' profile is active
+
+  # --- PYSPARK SERVICES ---
+  # This section sets up Apache Spark with a master and worker node.
+  # It uses Bitnami's Spark image for simplicity and includes environment variables
+  # to configure Spark's behavior. The Spark master and worker nodes are connected
+  # to the Kafka network for potential data processing tasks.
+  # The Spark master will be accessible on port 8080, and the worker on port 8082.
+  spark-master:
+    build:
+      context: spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080" # Spark Master Web UI
+      - "7077:7077" # Spark Master Port
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+    volumes:
+      - ./spark/spark-apps:/opt/spark-apps:rw # Mount your PySpark scripts here
+      - ./spark/spark-data:/opt/spark-data:rw # For any data Spark might write (optional)
+      - ./spark/additional-jars:/opt/bitnami/spark/.ivy2:rw # Mount additional needed JARs 
+    networks:
+      - internal-network
+    depends_on: # Optional, but good for startup order if you automate job submission
+      kafka1:
+        condition: service_healthy # Waits for healthcheck
+      kafka2:
+        condition: service_healthy # Waits for healthcheck
+      kafka3:
+        condition: service_healthy # Waits for healthcheck
+      schema-registry:
+        condition: service_healthy # Waits for healthcheck
+      control-center:
+        condition: service_healthy # Waits for healthcheck
+    restart: unless-stopped
+
+  spark-worker:
+    build:
+      context: spark
+      dockerfile: Dockerfile
+    container_name: spark-worker
+    hostname: spark-worker
+    ports:
+      - "8082:8081" # Spark Worker Web UI (use a different host port like 8082 to avoid conflict if schema-registry was on 8081)
+                    # Bitnami Spark worker UI is on 8081 by default inside the container.
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G # Adjust as needed
+      - SPARK_WORKER_CORES=2   # Adjust as needed
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+      - SPARK_LOG_LEVEL=INFO # Control Spark's verbosity
+    volumes:
+      - ./spark/spark-apps:/opt/spark-apps:rw # Mount your PySpark scripts here
+      - ./spark/spark-data:/opt/spark-data:rw # For any data Spark might write (optional)
+      - ./spark/additional-jars:/opt/bitnami/spark/.ivy2:rw # Mount additional needed JARs 
+    networks:
+      - internal-network
+    depends_on:
+      - spark-master
+    restart: unless-stopped
+
+# --- Apache Airflow Minimal Setup ---
+# This section sets up a minimal Apache Airflow environment with PostgreSQL as the backend.
+# It uses the LocalExecutor for simplicity and is suitable for development or small-scale tasks.
+# It includes a single Airflow instance with a PostgreSQL database.
+  postgres_airflow:
+    image: postgres:13-alpine # Alpine for smaller size
+    container_name: postgres_airflow_db
+    environment:
+      - POSTGRES_USER=airflow_user
+      - POSTGRES_PASSWORD=airflow_pass
+      - POSTGRES_DB=airflow_db
+    volumes:
+      - ./airflow/postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432" # Expose on 5433 to avoid conflict if you have another Postgres
+    networks:
+      - internal-network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow_user", "-d", "airflow_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # depends_on:
+    #   - spark-master # Ensure Spark master is up before Airflow tries to start the pipeline
+    #   - spark-worker # Ensure Spark worker is up before Airflow tries to start the pipeline
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init_minimal
+    entrypoint: /bin/bash
+    # This command will:
+    # 1. Initialize/upgrade the database schema.
+    # 2. Create an admin user (if it doesn't exist).
+    # You only need to run this once, or when upgrading Airflow versions.
+    # For subsequent starts, `airflow-scheduler` and `airflow-webserver` will ensure the DB is up-to-date.
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password admin || true
+    # No restart policy needed for init container, it runs to completion.
+    networks:
+      - internal-network
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler_minimal
+    command: scheduler
+    depends_on:
+      airflow-init: # Ensure init runs before scheduler starts trying to use the DB
+        condition: service_completed_successfully
+      postgres_airflow:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal-network
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver_minimal
+    command: webserver
+    ports:
+      - "8070:8080" # Airflow UI
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      airflow-init: # Ensure init runs before webserver starts trying to use the DB
+        condition: service_completed_successfully
+      postgres_airflow:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal-network
+
+networks:
+  internal-network:
+    driver: bridge
