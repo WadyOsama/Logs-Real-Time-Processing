@@ -14,9 +14,9 @@ x-airflow-common: &airflow-common
     # If you need to install providers (e.g., for S3, Snowflake, etc.)
     # - _PIP_ADDITIONAL_REQUIREMENTS=
   volumes:
-    - ./airflow/dags:/opt/airflow/dags # Mount your DAGs folder
-    - ./airflow/logs:/opt/airflow/logs # For persistent task logs
-    - ./airflow/plugins:/opt/airflow/plugins # For custom plugins
+    - ./airflow/dags:/opt/airflow/dags:rw # Mount your DAGs folder
+    - ./airflow/logs:/opt/airflow/logs:rw # For persistent task logs
+    - ./airflow/plugins:/opt/airflow/plugins:rw # For custom plugins
     - /var/run/docker.sock:/var/run/docker.sock # Mandatory because you need to run Docker tasks from Airflow
     - ./:/opt/project_root # Mount the current directory (containing docker-compose.yml)
   # This ensures files created in mounted volumes have your host user's permissions
@@ -60,11 +60,11 @@ services:
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter # Metric reporter for Confluent
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094 # Bootstrap servers for metrics reporter
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3 # Replication factor for metrics reporter topic
-      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
       CONFLUENT_METRICS_ENABLE: 'true' # Enable Confluent metrics
       CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Generate a unique Base64 Cluster ID
     volumes:
-      - ./kafka/kafka1-data:/tmp/kafka-data:rw
+      - kafka1_data_vol:/var/lib/kafka/data
     networks:
       - internal-network # Network for Kafka communication
     healthcheck:
@@ -107,11 +107,11 @@ services:
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3
-      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
       CONFLUENT_METRICS_ENABLE: 'true'
       CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Must be the same for all nodes
     volumes:
-      - ./kafka/kafka2-data:/tmp/kafka-data:rw
+      - kafka2_data_vol:/var/lib/kafka/data
     networks:
       - internal-network
     healthcheck:
@@ -154,11 +154,11 @@ services:
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka1:29092,kafka2:29093,kafka3:29094
       CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 3
-      KAFKA_LOG_DIRS: '/tmp/kafka-data'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
       CONFLUENT_METRICS_ENABLE: 'true'
       CLUSTER_ID: 'B4ox8MWjRtSkKma7ZsxyVg' # Must be the same for all nodes
     volumes:
-      - ./kafka/kafka3-data:/tmp/kafka-data:rw
+      - kafka3_data_vol:/var/lib/kafka/data
     networks:
       - internal-network
     healthcheck:
@@ -258,8 +258,6 @@ services:
         condition: service_healthy # Waits for healthcheck
       schema-registry:
         condition: service_healthy # Waits for healthcheck
-      control-center:
-        condition: service_healthy # Waits for healthcheck
     profiles: ["manual"] # Only run this service when the 'manual' profile is active
 
   # --- PYSPARK SERVICES ---
@@ -298,8 +296,6 @@ services:
       kafka3:
         condition: service_healthy # Waits for healthcheck
       schema-registry:
-        condition: service_healthy # Waits for healthcheck
-      control-center:
         condition: service_healthy # Waits for healthcheck
     restart: unless-stopped
 
@@ -345,7 +341,7 @@ services:
       - POSTGRES_PASSWORD=airflow_pass
       - POSTGRES_DB=airflow_db
     volumes:
-      - ./airflow/postgres_data:/var/lib/postgresql/data
+      - ./airflow/postgres_data:/var/lib/postgresql/data:rw
     ports:
       - "5433:5432" # Expose on 5433 to avoid conflict if you have another Postgres
     networks:
@@ -355,9 +351,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    # depends_on:
-    #   - spark-master # Ensure Spark master is up before Airflow tries to start the pipeline
-    #   - spark-worker # Ensure Spark worker is up before Airflow tries to start the pipeline
+    depends_on:
+      - spark-master # Ensure Spark master is up before Airflow tries to start the pipeline
+      - spark-worker # Ensure Spark worker is up before Airflow tries to start the pipeline
     restart: unless-stopped
 
   airflow-init:
@@ -420,3 +416,11 @@ services:
 networks:
   internal-network:
     driver: bridge
+
+volumes:
+  kafka1_data_vol:
+    driver: local
+  kafka2_data_vol:
+    driver: local
+  kafka3_data_vol:
+    driver: local

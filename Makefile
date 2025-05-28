@@ -1,7 +1,7 @@
 start-pipeline:
 	@echo "Starting the pipeline..."
-	docker compose up -d
 	docker compose --profile manual create
+	docker compose up -d
 	@echo "Pipeline started successfully."
 stop-pipeline:
 	@echo "Stopping the pipeline..."
